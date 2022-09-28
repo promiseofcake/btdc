@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 
@@ -14,57 +13,93 @@ type input struct {
 	Devices []string `yaml:"devices"`
 }
 
-type deviceMap map[string]interface{}
+type SavedAddresses map[string]interface{}
 
-type output struct {
-	Devices []device
+func (s SavedAddresses) IsSaved(addr string) bool {
+	if _, ok := s[addr]; ok {
+		return true
+	}
+	return false
 }
 
-type device struct {
+type PairedDevices []BluetoothDevice
+
+type BluetoothDevice struct {
 	Address string `json:"address"`
 	Name    string `json:"name"`
 }
 
-func main() {
-	var err error
-	bts, err := os.ReadFile("./allow.yml")
+func GetSaved(path string) (SavedAddresses, error) {
+	saved := make(SavedAddresses)
+
+	bts, err := os.ReadFile(path)
 	if err != nil {
-		log.Fatalf("error: %v", err)
+		return nil, fmt.Errorf("failed to read path %s, %w", path, err)
 	}
 
-	var i input
-	err = yaml.Unmarshal(bts, &i)
+	var s input
+	err = yaml.Unmarshal(bts, &s)
 	if err != nil {
-		log.Fatalf("error: %v", err)
+		return nil, fmt.Errorf("failed to parse saved devices, %w", err)
 	}
 
-	kept := make(deviceMap)
-	for _, add := range i.Devices {
-		kept[add] = nil
+	for _, address := range s.Devices {
+		saved[address] = nil
 	}
 
+	return saved, nil
+}
+
+func GetPaired() (PairedDevices, error) {
 	out, err := exec.Command("/usr/local/bin/blueutil", "--paired", "--format", "json").Output()
 	if err != nil {
-		log.Fatal(err)
+		return nil, fmt.Errorf("failed to read call list paired devices, %w", err)
 	}
 
-	var devices []device
-	err = json.Unmarshal(out, &devices)
+	var paired PairedDevices
+	err = json.Unmarshal(out, &paired)
 	if err != nil {
-		log.Fatal(err)
+		return nil, fmt.Errorf("failed to read paried devices, %w", err)
 	}
 
-	for _, o := range devices {
-		if _, ok := kept[o.Address]; ok {
-			fmt.Printf("Skipping %s [%s]\n", o.Name, o.Address)
-			continue
-		}
+	return paired, nil
+}
 
-		out, err := exec.Command("/usr/local/bin/blueutil", "--format", "json", "--unpair", o.Address).Output()
-		if err != nil {
-			fmt.Printf("error, failed to unpair %s, output: %s, err: %v\n ", o.Address, out, err)
-		}
-
-		fmt.Printf("Disconnected %s [%s]!\n", o.Name, o.Address)
+func Unpair(addr string) error {
+	cmd := exec.Command("/usr/local/bin/blueutil", "--format", "json", "--unpair", addr)
+	err := cmd.Run()
+	if err != nil {
+		return fmt.Errorf("failed to unpair device %s, %w", addr, err)
 	}
+	return nil
+}
+
+func main() {
+	var err error
+
+	saved, err := GetSaved("./allow.yml")
+	if err != nil {
+		panic(err)
+	}
+
+	paired, err := GetPaired()
+	if err != nil {
+		panic(err)
+	}
+
+	var pass, fail int
+	for _, device := range paired {
+		if !saved.IsSaved(device.Address) {
+			updateErr := Unpair(device.Address)
+			if updateErr != nil {
+				fmt.Printf("error, failed to unpair %s, err: %v\n", device.Address, updateErr)
+				fail++
+			} else {
+				fmt.Printf("Successfully unpaired %s [%s]!\n", device.Name, device.Address)
+				pass++
+			}
+		}
+	}
+
+	fmt.Printf("Unpaired %d devices, failed to unpair %d, devices!\n", pass, fail)
 }
