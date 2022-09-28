@@ -29,6 +29,14 @@ type BluetoothDevice struct {
 	Name    string `json:"name"`
 }
 
+func CheckDependencies() error {
+	_, err := exec.Command("command", "-v", "blueutil").Output()
+	if err != nil {
+		return fmt.Errorf("blueutil is not found, please install and try again, %w", err)
+	}
+	return nil
+}
+
 func GetSaved(path string) (SavedAddresses, error) {
 	saved := make(SavedAddresses)
 
@@ -51,7 +59,7 @@ func GetSaved(path string) (SavedAddresses, error) {
 }
 
 func GetPaired() (PairedDevices, error) {
-	out, err := exec.Command("/usr/local/bin/blueutil", "--paired", "--format", "json").Output()
+	out, err := exec.Command("blueutil", "--paired", "--format", "json").Output()
 	if err != nil {
 		return nil, fmt.Errorf("failed to read call list paired devices, %w", err)
 	}
@@ -76,6 +84,11 @@ func Unpair(addr string) error {
 
 func main() {
 	var err error
+
+	err = CheckDependencies()
+	if err != nil {
+		panic(err)
+	}
 
 	saved, err := GetSaved("./allow.yml")
 	if err != nil {
